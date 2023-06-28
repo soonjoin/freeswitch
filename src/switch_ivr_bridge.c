@@ -31,6 +31,246 @@
 
 #include <switch.h>
 #define DEFAULT_LEAD_FRAMES 10
+#define _FIX_RINGBACK_
+
+#ifdef _FIX_RINGBACK_
+
+struct ringback {
+	switch_buffer_t *audio_buffer;
+	teletone_generation_session_t ts;
+	switch_file_handle_t fhb;
+	switch_file_handle_t *fh;
+	int silence;
+	uint8_t asis;
+	int channels;
+	void *mux_buf;
+	int mux_buflen;
+};
+
+typedef struct ringback ringback_t;
+
+static int teletone_handler(teletone_generation_session_t *ts, teletone_tone_map_t *map)
+{
+	ringback_t *tto = ts->user_data;
+	int wrote;
+	void *buf;
+	int buflen;
+
+	if (!tto) {
+		return -1;
+	}
+	wrote = teletone_mux_tones(ts, map);
+	
+	if (tto->channels != 1) {
+		if (tto->mux_buflen < wrote * 2 * tto->channels) {
+			tto->mux_buflen = wrote * 2 * tto->channels;
+			tto->mux_buf = realloc(tto->mux_buf, tto->mux_buflen);
+		}
+		memcpy(tto->mux_buf, ts->buffer, wrote * 2);
+		switch_mux_channels((int16_t *) tto->mux_buf, wrote, 1, tto->channels);
+		buf = tto->mux_buf;
+		buflen = wrote * 2 * tto->channels;
+	} else {
+		buf = ts->buffer;
+		buflen = wrote * 2;
+	}
+
+	switch_buffer_write(tto->audio_buffer, buf, buflen);
+
+	return 0;
+}
+
+static void uninit_ringback(ringback_t *ringback, switch_frame_t *frame, switch_codec_t *codec)
+{
+	if (ringback->fh) {
+	    switch_core_file_close(ringback->fh);
+ 
+	    ringback->fh = NULL;
+	} else if (ringback->audio_buffer) {
+	    teletone_destroy_session(&ringback->ts);
+	    switch_safe_free(ringback->mux_buf);
+	    switch_buffer_destroy(&ringback->audio_buffer);
+	}
+ 
+	if (switch_core_codec_ready(codec)) {
+	    switch_core_codec_destroy(codec);
+	}
+ 
+	switch_safe_free(frame->data);
+}
+
+static switch_bool_t init_ringback(ringback_t *ringback, switch_frame_t *write_frame, switch_codec_t *write_codec, switch_core_session_t *caller_session, switch_channel_t *caller_channel)
+{
+	switch_bool_t have_ringback = SWITCH_FALSE;
+	const char *ringback_data = NULL;
+	switch_codec_t *read_codec;
+	uint8_t pass = 0;
+
+	if (switch_channel_test_flag(caller_channel, CF_PROXY_MODE) || switch_channel_test_flag(caller_channel, CF_PROXY_MEDIA)) {
+		return SWITCH_FALSE;
+	}
+
+	ringback_data = switch_channel_get_variable(caller_channel, "ringback");
+
+	if (ringback_data != NULL) {
+		switch_zmalloc(write_frame->data, SWITCH_RECOMMENDED_BUFFER_SIZE);
+		write_frame->buflen = SWITCH_RECOMMENDED_BUFFER_SIZE;
+
+		read_codec = switch_core_session_get_read_codec(caller_session);
+	}
+
+	if (read_codec && ringback_data) {
+		if (switch_is_file_path(ringback_data)) {
+			if (!(strrchr(ringback_data, '.') || strstr(ringback_data, SWITCH_URL_SEPARATOR))) {
+				ringback->asis++;
+			}
+		}
+
+		if (!ringback->asis) {
+			if ((pass = (uint8_t) switch_test_flag(read_codec, SWITCH_CODEC_FLAG_PASSTHROUGH))) {
+				ringback_data = NULL; // goto no_ringback;
+			} else {
+
+				if (switch_core_codec_init(write_codec,
+										"L16",
+										NULL,
+										NULL,
+										read_codec->implementation->actual_samples_per_second,
+										read_codec->implementation->microseconds_per_packet / 1000,
+										read_codec->implementation->number_of_channels, SWITCH_CODEC_FLAG_ENCODE | SWITCH_CODEC_FLAG_DECODE, NULL,
+										switch_core_session_get_pool(caller_session)) != SWITCH_STATUS_SUCCESS) {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(caller_session), SWITCH_LOG_ERROR, "Codec Error!\n");
+					if (caller_channel) {
+						switch_channel_hangup(caller_channel, SWITCH_CAUSE_BEARERCAPABILITY_NOTIMPL);
+					}
+					read_codec = NULL;
+					
+					ringback_data = NULL; //goto done;
+				} else {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(caller_session), SWITCH_LOG_DEBUG,
+									"Raw Codec Activation Success L16@%uhz 1 channel %dms\n",
+									read_codec->implementation->actual_samples_per_second, read_codec->implementation->microseconds_per_packet / 1000);
+
+					write_frame->codec = write_codec;
+					write_frame->datalen = read_codec->implementation->decoded_bytes_per_packet;
+					write_frame->samples = write_frame->datalen / 2;
+					memset(write_frame->data, 255, write_frame->datalen);
+					//switch_core_session_set_read_codec(caller_session, &write_codec);
+				}
+			}
+		}
+
+		if (switch_channel_test_flag(caller_channel, CF_DISABLE_RINGBACK)) {
+			ringback_data = NULL;
+		}
+
+		if (ringback_data) {
+			char *tmp_data = NULL;
+
+			if (switch_is_file_path(ringback_data)) {
+				char *ext;
+
+				if (ringback->asis) {
+					write_frame->codec = read_codec;
+					ext = read_codec->implementation->iananame;
+					tmp_data = switch_mprintf("%s.%s", ringback_data, ext);
+					ringback_data = tmp_data;
+				}
+
+				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(caller_session), SWITCH_LOG_DEBUG, "Play Ringback File [%s]\n", ringback_data);
+
+				ringback->fhb.channels = read_codec->implementation->number_of_channels;
+				ringback->fhb.samplerate = read_codec->implementation->actual_samples_per_second;
+				if (switch_core_file_open(&ringback->fhb,
+										ringback_data,
+										read_codec->implementation->number_of_channels,
+										read_codec->implementation->actual_samples_per_second,
+										SWITCH_FILE_FLAG_READ | SWITCH_FILE_DATA_SHORT, NULL) != SWITCH_STATUS_SUCCESS) {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(caller_session), SWITCH_LOG_ERROR, "Error Playing File\n");
+					switch_safe_free(tmp_data);
+					
+					ringback_data = NULL; //goto done;
+				} else {
+					ringback->fh = &ringback->fhb;
+					have_ringback = SWITCH_TRUE;
+				}
+			} else {
+				if (!strncasecmp(ringback_data, "silence", 7)) {
+					ringback_data = NULL; // 
+				} else {
+					switch_buffer_create_dynamic(&ringback->audio_buffer, 512, 1024, 0);
+					switch_buffer_set_loops(ringback->audio_buffer, -1);
+
+					teletone_init_session(&ringback->ts, 0, teletone_handler, ringback);
+					ringback->ts.rate = read_codec->implementation->actual_samples_per_second;
+					ringback->channels = read_codec->implementation->number_of_channels;
+
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(caller_session), SWITCH_LOG_DEBUG, "Play Ringback Tone [%s]\n", ringback_data);
+					if (teletone_run(&ringback->ts, ringback_data)) {
+						switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(caller_session), SWITCH_LOG_ERROR, "Error Playing Tone\n");
+						teletone_destroy_session(&ringback->ts);
+						switch_buffer_destroy(&ringback->audio_buffer);
+						ringback_data = NULL;
+					} else {
+						have_ringback = SWITCH_TRUE;
+					}
+				}
+			}
+			switch_safe_free(tmp_data);
+		}
+	}
+
+	if (have_ringback == SWITCH_FALSE) {
+		uninit_ringback(ringback, write_frame, write_codec);
+	}
+
+	return have_ringback;
+}
+
+static switch_bool_t read_ringback(ringback_t *ringback, switch_frame_t *write_frame, switch_channel_t *caller_channel)
+{
+	if (ringback->fh) {
+		switch_size_t mlen, olen;
+		unsigned int pos = 0;
+
+		if (ringback->asis) {
+			mlen = write_frame->codec->implementation->encoded_bytes_per_packet;
+		} else {
+			mlen = write_frame->codec->implementation->samples_per_packet;
+		}
+
+		olen = mlen;
+		//if (ringback.fh->resampler && ringback.fh->resampler->rfactor > 1) {
+		//olen = (switch_size_t) (olen * ringback.fh->resampler->rfactor);
+		//}
+		switch_core_file_read(ringback->fh, write_frame->data, &olen);
+
+		if (olen == 0) {
+			olen = mlen;
+			ringback->fh->speed = 0;
+			switch_core_file_seek(ringback->fh, &pos, 0, SEEK_SET);
+			switch_core_file_read(ringback->fh, write_frame->data, &olen);
+			if (olen == 0) {
+				switch_log_printf(SWITCH_CHANNEL_CHANNEL_LOG(caller_channel), SWITCH_LOG_ERROR, 
+								"Failure to read or re-read after seeking to beginning on file [%s]\n", ringback->fh->file_path);
+				return SWITCH_FALSE;
+			}
+		}
+		write_frame->datalen = (uint32_t) (ringback->asis ? olen : olen * 2 * ringback->fh->channels);
+	} else if (ringback->audio_buffer) {
+		if ((write_frame->datalen = (uint32_t) switch_buffer_read_loop(ringback->audio_buffer,
+															write_frame->data,
+															write_frame->codec->implementation->decoded_bytes_per_packet)) <= 0) {
+			return SWITCH_FALSE;
+		}
+	} else {
+		return SWITCH_FALSE;
+	}
+	
+	return SWITCH_TRUE;
+}
+
+#endif
 
 static const switch_state_handler_table_t audio_bridge_peer_state_handlers;
 static void cleanup_proxy_mode_a(switch_core_session_t *session);
@@ -287,6 +527,14 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 	struct vid_helper vh = { 0 };
 	uint32_t vid_launch = 0;
 #endif
+
+#ifdef _FIX_RINGBACK_
+	switch_bool_t have_ringback = SWITCH_FALSE;
+	switch_frame_t write_frame = { 0 };
+	switch_codec_t write_codec = { 0 };
+	ringback_t ringback = { 0 };
+#endif
+
 	data->clean_exit = 0;
 
 	session_a = data->session;
@@ -406,6 +654,12 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 	}
 
 	bridge_filter_dtmf = switch_true(switch_channel_get_variable(chan_a, "bridge_filter_dtmf"));
+
+#ifdef _FIX_RINGBACK_
+	if (switch_channel_direction(chan_a) == SWITCH_CALL_DIRECTION_OUTBOUND) {
+		have_ringback = init_ringback(&ringback, &write_frame, &write_codec, session_b, chan_b);		
+	}
+#endif
 
 	for (;;) {
 		switch_channel_state_t b_state;
@@ -687,6 +941,30 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 
 		if (SWITCH_READ_ACCEPTABLE(status)) {
 			read_frame_count++;
+
+#ifdef _FIX_RINGBACK_
+            //在被叫183振铃状态下，如果没有收到被叫的rtp数据则播放本地回铃，如果已经收到过被叫rtp数据则不再播放本地回铃
+			if ((switch_channel_direction(chan_a) == SWITCH_CALL_DIRECTION_OUTBOUND) && (switch_channel_get_callstate(chan_a) == CCS_RINGING || switch_channel_get_callstate(chan_a) == CCS_EARLY)) {
+				if (switch_test_flag(read_frame, SFF_CNG)) {
+					if (have_ringback == SWITCH_TRUE) {
+						switch_bool_t ringback_status = read_ringback(&ringback, &write_frame, chan_b);
+						
+						if (write_frame.codec && write_frame.datalen && (ringback_status == SWITCH_TRUE)) {
+							// 将read_frame改为读取的本地回铃数据
+							read_frame  = &write_frame;
+							// 清除SFF_CNG标记(似乎不需要，目前测试看确实也不需要)
+							//switch_clear_flag(read_frame, SFF_CNG);
+						}
+					}
+				} else {
+					if (have_ringback == SWITCH_TRUE) {
+						uninit_ringback(&ringback, &write_frame, &write_codec);
+						have_ringback = SWITCH_FALSE;
+					}
+				}
+			}
+#endif
+
 			if (switch_test_flag(read_frame, SFF_CNG)) {
 				if (silence_val) {
 					switch_generate_sln_silence((int16_t *) silence_frame.data, silence_frame.samples, 
@@ -729,6 +1007,11 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 
 	switch_core_session_passthru(session_a, SWITCH_MEDIA_TYPE_AUDIO, SWITCH_FALSE);
 
+#ifdef _FIX_RINGBACK_
+	if (have_ringback == SWITCH_TRUE) {
+		uninit_ringback(&ringback, &write_frame, &write_codec);
+	}
+#endif
 
 	if (silence_val) {
 		switch_core_codec_destroy(&silence_codec);
