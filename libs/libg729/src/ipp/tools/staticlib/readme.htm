@@ -1,0 +1,124 @@
+<html>
+
+<head>
+<title>Intel&#174; Integrated Performance Primitives: Creating Single-Processor Executables</title>
+</head>
+<body>
+<h1 align="center"><font face="Verdana" color="#006699" size="4"><i>Intel<sup> ®</sup> 
+Integrated Performance Primitives</i><br>
+<i>Creating Single-Processor Executables</i></font></h1>
+
+<h2><font face="Verdana" size="3" color="#006699">Introduction</font></h2>
+
+<p><font face="Verdana" size="2" color="#333333">The Intel<sup>&#174;</sup> Integrated Performance Primitives&nbsp;(Intel<sup>&#174; </sup>IPP) Merged Static
+Libraries are provided for those applications that require the small footprint advantages of static linking.
+The merged static librarires <b>ipp*merged.lib </b>each contain a version of each
+function for each processor (for Generic IA-32, Intel<sup>&#174;</sup>  Pentium III, 
+Pentium 4 processors, and Pentium 4 processors with Hyper-Threading Technology, Streaming SIMD Extensions 3 (SSE3) 
+and Intel® Core™2 Duo processors).&nbsp; In the unusual case in which an application or driver needs to be tied to a particular
+processor, it is also possible to repurpose these and link to one processor-version of
+Intel<sup>&#174; </sup>IPP only. </font>
+</p>
+
+<h2><font face="Verdana" size="3" color="#006699">Static linking to Intel<sup>&#174; </sup>IPP Functions for One Processor</font></h2>
+
+<ol>
+  <li><font face="Verdana" size="2" color="#333333">Add the files <b>ipp*merged.lib </b>to your project and its source
+    tree.</font></li>
+  <li><font face="Verdana" size="2" color="#333333">Include exactly one of the following files, located in this directory: <b>ipp_px.h, 
+	ipp_w7.h, ipp_t7.h ,ipp_v8.h or ipp_p8.h</b>.
+	See the table below for header choices.  This inclusion must be <it>before</it> the other
+    Intel<sup> </sup>IPP header files.</font></li>
+  <li><font face="Verdana" size="2" color="#333333">Add the file<b> ipp\lib\ippcorel.lib</b> to your project and its source
+    tree.</font></li>
+  <li><font face="Verdana" size="2" color="#333333">Include Intel<sup> </sup>IPP header file(s) as normal, after the above conversion header.</font></li>
+  <li><font face="Verdana" size="2" color="#333333">Call Intel<sup> </sup>IPP functions normally from your application.</font></li>
+</ol>
+<p><font face="Verdana" size="2" color="#333333">Now the correct processor-specific version of each function you specify will
+be called from the static libraries. It is important to insure that both processor and operating system
+supports the full capabilities of the target processor.</font></p>
+
+<h2><font face="Verdana" size="3" color="#006699">Processor codes</font></h2>
+
+<font face="Verdana" size="2" color="#333333">Include one of the following files, according to target processor:
+</font>
+<table border="1" cellspacing="0" height="202" width="770" cellpadding="4">
+    <tr>
+        <td width="105" height="19" bgcolor="#000000">
+		<font color="#FFFFFF" face="Verdana" size="2"><b>Header</b></font></td>
+        <td width="643" height="19" bgcolor="#000000">
+		<font color="#FFFFFF" face="Verdana" size="2"><b>Processor</b></font></td>
+	</tr>
+	<tr>
+        <td width="105" height="19"> 
+		<font face="Verdana" size="2" color="#333333">ipp_w7.h </font></td>
+        <td width="643" height="19">
+		<font face="Verdana" size="2" color="#333333">Pentium 4 processor&nbsp;</font></td>
+	</tr>
+	<tr>
+        <td width="105" height="19"> 
+		<font face="Verdana" size="2" color="#333333">ipp_t7.h</font></td>
+        <td width="643" height="19">
+		<font face="Verdana" size="2" color="#333333">Pentium 4 processor with Hyper-Threading
+        Technology and Streaming SIMD Extensions 3 (SSE3)</font></td>
+	</tr>
+	<tr>
+        <td width="105" height="19"> 
+		<font face="Verdana" size="2" color="#333333">ipp_v8.h</font></td>
+        <td width="643" height="19">
+		<font face="Verdana" size="2" color="#333333">Intel® Core™2 Duo processors 
+		</font> </td>
+	</tr>
+	<tr>
+        <td width="105" height="19"> 
+		<font face="Verdana" size="2" color="#333333">ipp_p8.h</font></td>
+        <td width="643" height="19">
+		<font face="Verdana" size="2" color="#333333">32-bit applications on 45nm Intel® Core™2 
+		Duo&nbsp; (Penryn) family processors</font></td>
+	</tr>
+	<tr>
+        <td width="105" height="19"> 
+		<font face="Verdana" size="2" color="#333333">ipp_px.h </font></td>
+        <td width="643" height="19">
+		<font face="Verdana" size="2" color="#333333">All other Intel<sup>&#174;</sup> architecture processors&nbsp;</font></td>
+	</tr>
+</table>
+
+<h2><font face="Verdana" size="3" color="#006699">Directory Contents</font></h2>
+
+<table border="1" cellspacing="0" height="82" width="767" cellpadding="4">
+    <tr>
+        <td width="111" height="26" bgcolor="#000000">
+		<font color="#FFFFFF" face="Verdana" size="2"><b>File</b></font></td>
+        <td width="634" height="26" bgcolor="#000000">
+		<font color="#FFFFFF" face="Verdana" size="2"><b>Description</b></font></td>
+    </tr>
+    <tr>
+        <td width="111" height="26">
+		<font face="Verdana" size="2" color="#333333"> readme.htm </font></td>
+        <td width="634" height="26">
+		<font face="Verdana" size="2" color="#333333">This file, Creating Single-Processor Executables&nbsp;</font></td>
+    </tr>
+    <tr>
+        <td width="111" height="28">
+		<font face="Verdana" size="2" color="#333333"> ipp_*.h </font></td>
+        <td width="634" height="28">
+		<font face="Verdana" size="2" color="#333333">Files that redefine each Intel<sup>&#174;</sup> IPP symbol to it's processor-specific counterpart</font></td>
+    </tr>
+</table>
+
+
+<font size=-2>
+<p><font face="Verdana" color="#333333">Intel, the Intel logo, Intel SpeedStep, Intel NetBurst, Intel NetStructure,
+MMX, i386, i486, Intel386, Intel486, Intel740, IntelDX2, IntelDX4,
+IntelSX2,Celeron, Intel Centrino, Intel Xeon, Intel XScale, Itanium, Pentium,
+Pentium II Xeon, Pentium III Xeon, Pentium M, and VTune are trademarks or
+registered trademarks of Intel Corporation or its subsidiaries in the United
+States and other countries. </font> </p>
+<p><font face="Verdana" color="#333333">* Other names and brands may be claimed as the property of others. <br>
+&nbsp;<br>
+Copyright © 2002-2008 Intel Corporation.</font></p>
+
+
+</body>
+</html>
