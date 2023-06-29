@@ -86,6 +86,9 @@ static switch_status_t switch_g729_init(switch_codec_t *codec, switch_codec_flag
 static switch_status_t switch_g729_destroy(switch_codec_t *codec)
 {
 #ifndef G729_PASSTHROUGH
+	struct g729_context *context = codec->private_info;
+	g729_release_coder( &(context->encoder_object) );
+	g729_release_decoder( &(context->decoder_object) );
 	codec->private_info = NULL;
 #endif
 	return SWITCH_STATUS_SUCCESS;
@@ -104,32 +107,43 @@ static switch_status_t switch_g729_encode(switch_codec_t *codec,
 #else
 	struct g729_context *context = codec->private_info;
 	int cbret = 0;
+	uint32_t new_len = 0;
+	short *ddp = decoded_data;
+	char *edp = encoded_data;
+	int x;
+	int loops = (int) decoded_data_len / 160;
+	uint32_t rest_decoded_data_len = decoded_data_len % 160;
+	short rest_decoded_data[80] = { 0 };
 
 	if (!context) {
 		return SWITCH_STATUS_FALSE;
 	}
-
-	if (decoded_data_len % 160 == 0) {
-		uint32_t new_len = 0;
-		INT16 *ddp = decoded_data;
-		char *edp = encoded_data;
-		int x;
-		int loops = (int) decoded_data_len / 160;
-
-		for (x = 0; x < loops && new_len < *encoded_data_len; x++) {
-			g729_coder(&context->encoder_object, ddp, edp, &cbret);
-			edp += 10;
-			ddp += 80;
-			new_len += 10;
-		}
-
-		if (new_len <= *encoded_data_len) {
+	
+	for (x = 0; x < loops; x++) {
+		if (new_len + 10 > *encoded_data_len) {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "buffer overflow!!! %u > %u\n", new_len + 10, *encoded_data_len);
 			*encoded_data_len = new_len;
-		} else {
-			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "buffer overflow!!! %u >= %u\n", new_len, *encoded_data_len);
-			return SWITCH_STATUS_FALSE;
+			return SWITCH_STATUS_SUCCESS;
 		}
+		g729_coder(&context->encoder_object, ddp, edp, &cbret);
+		edp += 10;
+		ddp += 80;
+		new_len += 10;
 	}
+	if ( rest_decoded_data_len > 0 && rest_decoded_data_len <= 160 ) {
+		if (new_len + 10 > *encoded_data_len) {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "buffer overflow!!! %u > %u\n", new_len + 10, *encoded_data_len);
+			*encoded_data_len = new_len;
+			return SWITCH_STATUS_SUCCESS;
+		}
+		memcpy(rest_decoded_data, ddp, rest_decoded_data_len);
+		g729_coder(&context->encoder_object, (short *)rest_decoded_data, edp, &cbret);
+		edp += 10;
+		ddp += 80;
+		new_len += 10;
+	}
+
+	*encoded_data_len = new_len;
 	return SWITCH_STATUS_SUCCESS;
 #endif
 }
