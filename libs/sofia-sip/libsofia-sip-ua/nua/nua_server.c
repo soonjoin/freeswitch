@@ -242,7 +242,7 @@ int nua_stack_process_request(nua_handle_t *nh,
   }
 
   /* INVITE server request is not finalized after 2XX response */
-  if (sr->sr_status < (method == sip_method_invite ? 300 : 200)) {
+  if (sr->sr_status < (method == sip_method_invite ? 300 : 200) || method == sip_method_update) {
     sr = su_alloc(nh->nh_home, (sizeof *sr));
 
     if (sr) {
@@ -271,7 +271,7 @@ int nua_stack_process_request(nua_handle_t *nh,
   }
   else {
     /* Note that this may change the sr->sr_status */
-    nua_server_respond(sr, NULL);
+    if (method != sip_method_update) nua_server_respond(sr, NULL);
   }
 
   if (nua_server_report(sr) == 0)
@@ -711,7 +711,7 @@ int nua_base_server_report(nua_server_request_t *sr, tagi_t const *tags)
   if (status < 200)
     return 0;			/* sr lives on until final response is sent */
 
-  if (sr->sr_method == sip_method_invite && status < 300)
+  if ((sr->sr_method == sip_method_invite || sr->sr_method == sip_method_update) && status < 300)
     return 0;			/* INVITE lives on until ACK is received */
 
   if (initial && 300 <= status)

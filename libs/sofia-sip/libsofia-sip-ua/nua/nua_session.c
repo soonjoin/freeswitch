@@ -3660,7 +3660,7 @@ int nua_update_server_report(nua_server_request_t *sr, tagi_t const *tags)
   int offer_recv_or_answer_sent = sr->sr_offer_recv || sr->sr_answer_sent;
   int retval;
 
-  retval = nua_base_server_report(sr, tags), sr = NULL; /* destroys sr */
+  retval = nua_base_server_treport(sr, TAG_IF(sr->sr_sdp, SOATAG_REMOTE_SDP_STR(sr->sr_sdp)), TAG_NEXT(tags)), sr = NULL; /* destroys sr */
 
   if (retval >= 2 || ss == NULL) {
 #if 0

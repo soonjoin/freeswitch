@@ -1775,7 +1775,53 @@ static void our_sofia_event_callback(nua_event_t event,
 		break;
 	case nua_i_update:
 		if (session) {
+			const char *r_sdp = NULL;
+
 			sofia_update_callee_id(session, profile, sip, SWITCH_TRUE);
+
+			tl_gets(tags, SOATAG_REMOTE_SDP_STR_REF(r_sdp), TAG_END());
+			if (!switch_channel_test_flag(channel, CF_PROXY_MODE) && !switch_channel_test_flag(channel, CF_PROXY_MEDIA) &&
+				r_sdp && sofia_test_flag(tech_pvt, TFLAG_NEW_SDP) && switch_core_media_ready(tech_pvt->session, SWITCH_MEDIA_TYPE_AUDIO)) {
+					/* sdp changed since 18X w sdp, we're supposed to ignore it but we, of course, were pressured into supporting it */
+					uint8_t match = 0;
+
+					sofia_clear_flag(tech_pvt, TFLAG_NEW_SDP);
+
+
+					if (tech_pvt->mparams.num_codecs) {
+						match = sofia_media_negotiate_sdp(session, r_sdp, SDP_TYPE_RESPONSE);
+					}
+					if (match) {
+						if (switch_core_media_choose_port(tech_pvt->session, SWITCH_MEDIA_TYPE_AUDIO, 0) != SWITCH_STATUS_SUCCESS) {
+							goto done;
+						}
+						switch_core_media_gen_local_sdp(session, SDP_TYPE_RESPONSE, NULL, 0, NULL, 0);
+
+						switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Processing updated SDP\n");
+
+						nua_respond(tech_pvt->nh, SIP_200_OK,
+									SIPTAG_CONTACT_STR(tech_pvt->reply_contact),
+									NUTAG_WITH_THIS_MSG(de->data->e_msg),
+									TAG_IF(!zstr(tech_pvt->mparams.local_sdp_str), SOATAG_USER_SDP_STR(tech_pvt->mparams.local_sdp_str)),
+									TAG_END());
+
+						if (sofia_media_activate_rtp(tech_pvt) != SWITCH_STATUS_SUCCESS) {
+							switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "RTP Error!\n");
+							switch_channel_hangup(channel, SWITCH_CAUSE_DESTINATION_OUT_OF_ORDER);
+							goto done;
+						}
+					} else {
+						switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Codec Error! %s\n", r_sdp);
+						goto done;
+
+					}
+			} else {
+					/* update without sdp */
+					nua_respond(tech_pvt->nh, SIP_200_OK,
+								SIPTAG_CONTACT_STR(tech_pvt->reply_contact),
+								NUTAG_WITH_THIS_MSG(de->data->e_msg),
+								TAG_END());
+			}
 		}
 		break;
 	case nua_r_update:
