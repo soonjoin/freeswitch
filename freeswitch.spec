@@ -2,7 +2,7 @@
 #
 # spec file for package freeswitch
 #
-# includes module(s): freeswitch-devel freeswitch-codec-passthru-amr freeswitch-codec-passthru-amrwb freeswitch-codec-passthru-g729 
+# includes module(s): freeswitch-devel freeswitch-codec-passthru-amr freeswitch-codec-passthru-amrwb freeswitch-codec-itut-g729 
 #                     freeswitch-codec-passthru-g7231 freeswitch-lua freeswitch-perl freeswitch-python freeswitch-v8
 #                     freeswitch-lan-de freeswitch-lang-en freeswitch-lang-fr freeswitch-lang-hu freeswitch-lang-ru freeswitch-freetdm
 #		      and others
@@ -37,7 +37,7 @@
 %define build_mod_esl 0
 %define build_mod_rayo 1
 %define build_mod_ssml 1
-%define build_mod_shout 0
+%define build_mod_shout 1
 
 %{?with_sang_tc:%define build_sng_tc 1 }
 %{?with_sang_isdn:%define build_sng_isdn 1 }
@@ -444,6 +444,14 @@ Requires:       %{name} = %{version}-%{release}
 Provides FreeSWITCH mod_hash, implements an API and application interface for 
 manipulating a hash table. It also provides a limit backend. 
 
+%package application-hiredis
+Summary:        FreeSWITCH mod_hiredis
+Group:          System/Libraries
+Requires:       %{name} = %{version}-%{release}
+
+%description application-hiredis
+Provides FreeSWITCH mod_hiredis, implements an API interface to redis 
+
 %package application-httapi
 Summary:	FreeSWITCH mod_httapi
 Group:          System/Libraries
@@ -714,14 +722,14 @@ Conflicts:	codec-g723_1
 %description codec-passthru-g723_1
 Pass-through g723.1 Codec support for FreeSWITCH open source telephony platform
 
-%package codec-passthru-g729
-Summary:        Pass-through g729 Codec support for FreeSWITCH open source telephony platform
+%package codec-itut-g729
+Summary:        ITU-T g729 Codec support for FreeSWITCH open source telephony platform
 Group:          System/Libraries
 Requires:       %{name} = %{version}-%{release}
 Conflicts:	codec-com-g729
 
-%description codec-passthru-g729
-Pass-through g729 Codec support for FreeSWITCH open source telephony platform
+%description codec-itut-g729
+ITU-T g729 Codec support for FreeSWITCH open source telephony platform
 
 %package codec-h26x
 Summary:        H.263/H.264 Video Codec support for FreeSWITCH open source telephony platform
@@ -973,6 +981,13 @@ bridged, originated, answered, etc. as in all other endpoints, e.g. Sofia-SIP).
 ######################################################################################################################
 #				FreeSWITCH Event Handler Modules
 ######################################################################################################################
+%package amqp
+Summary:        AMQP Module for the FreeSWITCH open source telephony platform
+Group:          System/Libraries
+Requires:        %{name} = %{version}-%{release}
+
+%description amqp
+AMQP Module for the FreeSWITCH open source telephony platform
 
 %package event-cdr-mongodb
 Summary:	MongoDB CDR Logger for the FreeSWITCH open source telephony platform
@@ -1142,10 +1157,10 @@ a soundcard, etc.
 Summary:	Implements Media Steaming from arbitrary shell commands for the FreeSWITCH open source telephony platform
 Group:		System/Libraries
 Requires:	%{name} = %{version}-%{release}
-Requires:	libshout >= 2.3.1
+Requires:	libshout >= 2.2.2
 Requires:	libmpg123 >= 1.20.1
 Requires:	lame
-BuildRequires:	libshout-devel >= 2.3.1
+BuildRequires:	libshout-devel >= 2.2.2
 BuildRequires:	libmpg123-devel >= 1.20.1
 BuildRequires:	lame-devel
 
@@ -1369,13 +1384,13 @@ Requires:	freeswitch-application-stress
 Requires:	freeswitch-application-valet_parking
 Requires:	freeswitch-application-voicemail
 Requires:	freeswitch-application-voicemail-ivr
-Requires:	freeswitch-codec-passthru-amr
-Requires:	freeswitch-codec-bv
-Requires:	freeswitch-codec-passthru-g723_1
-Requires:	freeswitch-codec-passthru-g729
-Requires:	freeswitch-codec-h26x
-Requires:	freeswitch-codec-ilbc
-Requires:	freeswitch-codec-siren
+#Requires:	freeswitch-codec-passthru-amr
+#Requires:	freeswitch-codec-bv
+#Requires:	freeswitch-codec-passthru-g723_1
+#Requires:	freeswitch-codec-itut-g729
+#Requires:	freeswitch-codec-h26x
+#Requires:	freeswitch-codec-ilbc
+#Requires:	freeswitch-codec-siren
 Requires:	freeswitch-format-local-stream
 Requires:	freeswitch-format-native-file
 Requires:	freeswitch-format-portaudio-stream
@@ -1440,7 +1455,7 @@ APPLICATION_MODULES_DE+="applications/mod_esl"
 %endif
 
 APPLICATION_MODULES_FR="applications/mod_fifo applications/mod_fsk applications/mod_fsv applications/mod_hash \
-			applications/mod_httapi applications/mod_http_cache applications/mod_lcr applications/mod_limit \
+			applications/mod_hiredis applications/mod_httapi applications/mod_http_cache applications/mod_lcr applications/mod_limit \
 			applications/mod_memcache applications/mod_mongo applications/mod_nibblebill applications/mod_rad_auth \
 			applications/mod_redis applications/mod_rss "
 
@@ -1501,7 +1516,7 @@ ENDPOINTS_MODULES="endpoints/mod_dingaling ../../libs/freetdm/mod_freetdm \
 #						Event Handlers
 #
 ######################################################################################################################
-EVENT_HANDLERS_MODULES="event_handlers/mod_cdr_csv event_handlers/mod_cdr_pg_csv event_handlers/mod_cdr_sqlite \
+EVENT_HANDLERS_MODULES="event_handlers/mod_amqp event_handlers/mod_cdr_csv event_handlers/mod_cdr_pg_csv event_handlers/mod_cdr_sqlite \
 			event_handlers/mod_cdr_mongodb event_handlers/mod_format_cdr event_handlers/mod_erlang_event event_handlers/mod_event_multicast \
 			event_handlers/mod_event_socket event_handlers/mod_json_cdr event_handlers/mod_kazoo event_handlers/mod_radius_cdr \
 			event_handlers/mod_snmp"
@@ -2065,6 +2080,9 @@ fi
 %files application-hash
 %{MODINSTDIR}/mod_hash.so*
 
+%files application-hiredis
+%{MODINSTDIR}/mod_hiredis.so*
+
 %files application-httapi
 %{MODINSTDIR}/mod_httapi.so*
 
@@ -2164,7 +2182,7 @@ fi
 %files codec-passthru-g723_1
 %{MODINSTDIR}/mod_g723_1.so*
 
-%files codec-passthru-g729
+%files codec-itut-g729
 %{MODINSTDIR}/mod_g729.so*
 
 %files codec-h26x
@@ -2274,6 +2292,9 @@ fi
 #					Event Modules
 #
 ######################################################################################################################
+
+%files amqp
+%{MODINSTDIR}/mod_amqp.so*
 
 %files event-cdr-mongodb
 %{MODINSTDIR}/mod_cdr_mongodb.so*

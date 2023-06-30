@@ -5,4 +5,4 @@
 #
 # if not empty: parameters for freeswitch
 #
-FREESWITCH_PARAMS=""
+DAEMON_OPTS="-u freeswitch -g daemon -ncwait -nonat"
