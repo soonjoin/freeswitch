@@ -3436,7 +3436,7 @@ SWITCH_DECLARE(switch_status_t) switch_channel_perform_mark_pre_answered(switch_
 				if ((osession = switch_core_session_locate(channel->caller_profile->originator_caller_profile->uuid))) {
 					switch_channel_t *other_channel;
 					other_channel = switch_core_session_get_channel(osession);
-					if (other_channel->caller_profile) {
+					if (other_channel->caller_profile && !other_channel->caller_profile->times->progress_media) {
 						other_channel->caller_profile->times->progress_media = channel->caller_profile->times->progress_media;
 					}
 					switch_core_session_rwunlock(osession);
