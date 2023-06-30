@@ -1,6 +1,6 @@
 /*
 * FreeSWITCH Modular Media Switching Software Library / Soft-Switch Application
-* Copyright (C) 2005-2015, Anthony Minessale II <anthm@freeswitch.org>
+* Copyright (C) 2005-2016, Anthony Minessale II <anthm@freeswitch.org>
 *
 * Version: MPL 1.1
 *
@@ -32,7 +32,7 @@
 
 #include <mod_hiredis.h>
 
-switch_status_t mod_hiredis_do_config() 
+switch_status_t mod_hiredis_do_config()
 {
 	char *conf = "hiredis.conf";
 	switch_xml_t xml, cfg, profiles, profile, connections, connection, params, param;
@@ -43,9 +43,12 @@ switch_status_t mod_hiredis_do_config()
 	}
 
 	if ( (profiles = switch_xml_child(cfg, "profiles")) != NULL) {
-		for (profile = switch_xml_child(profiles, "profile"); profile; profile = profile->next) {		
+		for (profile = switch_xml_child(profiles, "profile"); profile; profile = profile->next) {
 			hiredis_profile_t *new_profile = NULL;
 			uint8_t ignore_connect_fail = 0;
+			uint8_t ignore_error = 0;
+			int max_pipelined_requests = 0;
+			int delete_when_zero = 0;
 			char *name = (char *) switch_xml_attr_soft(profile, "name");
 
 			// Load params
@@ -54,11 +57,21 @@ switch_status_t mod_hiredis_do_config()
 					char *var = (char *) switch_xml_attr_soft(param, "name");
 					if ( !strncmp(var, "ignore-connect-fail", 19) ) {
 						ignore_connect_fail = switch_true(switch_xml_attr_soft(param, "value"));
+					} else if ( !strncmp(var, "ignore-error", 12) ) {
+						ignore_error = switch_true(switch_xml_attr_soft(param, "value"));
+					} else if ( !strncmp(var, "max-pipelined-requests", 22) ) {
+						max_pipelined_requests = atoi(switch_xml_attr_soft(param, "value"));
+					} else if ( !strncmp(var, "delete-when-zero", 16) ) {
+						delete_when_zero = switch_true(switch_xml_attr_soft(param, "value"));
 					}
 				}
 			}
 
-			if ( hiredis_profile_create(&new_profile, name, ignore_connect_fail) == SWITCH_STATUS_SUCCESS ) {
+			if (max_pipelined_requests <= 0) {
+				max_pipelined_requests = 20;
+			}
+
+			if ( hiredis_profile_create(&new_profile, name, ignore_connect_fail, ignore_error, max_pipelined_requests, delete_when_zero) == SWITCH_STATUS_SUCCESS ) {
 				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Created profile[%s]\n", name);
 			} else {
 				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Failed to create profile[%s]\n", name);
@@ -66,10 +79,10 @@ switch_status_t mod_hiredis_do_config()
 
 			/* Add connection to profile */
 			if ( (connections = switch_xml_child(profile, "connections")) != NULL) {
-				for (connection = switch_xml_child(connections, "connection"); connection; connection = connection->next) {		
+				for (connection = switch_xml_child(connections, "connection"); connection; connection = connection->next) {
 					char *host = NULL, *password = NULL;
-					uint32_t port = 0, timeout_ms = 0, max_connections = 0;
-					
+					uint32_t port = 0,dbindex = 0, timeout_ms = 0, max_connections = 0;
+
 					for (param = switch_xml_child(connection, "param"); param; param = param->next) {
 						char *var = (char *) switch_xml_attr_soft(param, "name");
 						if ( !strncmp(var, "hostname", 8) ) {
@@ -77,7 +90,9 @@ switch_status_t mod_hiredis_do_config()
 						} else if ( !strncmp(var, "port", 4) ) {
 							port = atoi(switch_xml_attr_soft(param, "value"));
 							switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "hiredis: adding conn[%u == %s]\n", port, switch_xml_attr_soft(param, "value"));
-						} else if ( !strncmp(var, "timeout-ms", 10) || !strncmp(var, "timeout_ms", 10) ) {
+						} else if (!strncmp(var, "dbindex", 7)) {
+							dbindex = atoi(switch_xml_attr_soft(param, "value"));
+						}else if ( !strncmp(var, "timeout-ms", 10) || !strncmp(var, "timeout_ms", 10) ) {
 							timeout_ms = atoi(switch_xml_attr_soft(param, "value"));
 						} else if ( !strncmp(var, "password", 8) ) {
 							password = (char *) switch_xml_attr_soft(param, "value");
@@ -86,7 +101,7 @@ switch_status_t mod_hiredis_do_config()
 						}
 					}
 
-					if ( hiredis_profile_connection_add(new_profile, host, password, port, timeout_ms, max_connections) == SWITCH_STATUS_SUCCESS) {
+					if ( hiredis_profile_connection_add(new_profile, host, password, port, dbindex, timeout_ms, max_connections) == SWITCH_STATUS_SUCCESS) {
 						switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Created profile[%s]\n", name);
 					} else {
 						switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Failed to create profile[%s]\n", name);
@@ -101,9 +116,9 @@ switch_status_t mod_hiredis_do_config()
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Profiles config is missing\n");
 		goto err;
 	}
-	
+
 	return SWITCH_STATUS_SUCCESS;
-	
+
  err:
 	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Configuration failed\n");
 	return SWITCH_STATUS_GENERR;

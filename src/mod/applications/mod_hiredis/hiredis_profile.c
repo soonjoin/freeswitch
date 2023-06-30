@@ -32,12 +32,46 @@
 
 #include <mod_hiredis.h>
 
+/* auth if password is set */
+static switch_status_t hiredis_context_auth(hiredis_context_t *context)
+{
+	switch_status_t status = SWITCH_STATUS_SUCCESS;
+	if ( !zstr(context->connection->password) ) {
+		redisReply *response = redisCommand(context->context, "AUTH %s", context->connection->password);
+		if ( !response || response->type == REDIS_REPLY_ERROR ) {
+			status = SWITCH_STATUS_FALSE;
+		}
+		if ( response ) {
+			freeReplyObject(response);
+		}
+	}
+	return status;
+}
+
+/* select db */
+static switch_status_t hiredis_context_selectdb(hiredis_context_t *context)
+{
+	switch_status_t status = SWITCH_STATUS_SUCCESS;
+	context->connection->dbindex = context->connection->dbindex < 0 ? 0 : context->connection->dbindex;
+	context->connection->dbindex = context->connection->dbindex > 15 ? 0 : context->connection->dbindex;
+	if ( context->connection->dbindex >= 0 ) {
+		redisReply *response = redisCommand(context->context, "select %d", context->connection->dbindex);
+		if ( !response || response->type == REDIS_REPLY_ERROR ) {
+			status = SWITCH_STATUS_FALSE;
+		}
+		if ( response ) {
+			freeReplyObject(response);
+		}
+	}
+	return status;
+}
+
 /* reconnect to redis server */
 static switch_status_t hiredis_context_reconnect(hiredis_context_t *context)
 {
 	redisFree(context->context);
 	context->context = redisConnectWithTimeout(context->connection->host, context->connection->port, context->connection->timeout);
-	if ( context->context && !context->context->err ) {
+	if ( context->context && !context->context->err && hiredis_context_auth(context) == SWITCH_STATUS_SUCCESS && hiredis_context_selectdb(context) == SWITCH_STATUS_SUCCESS ) {
 		return SWITCH_STATUS_SUCCESS;
 	}
 	return SWITCH_STATUS_FALSE;
@@ -46,10 +80,12 @@ static switch_status_t hiredis_context_reconnect(hiredis_context_t *context)
 /* Return a context back to the pool */
 static void hiredis_context_release(hiredis_context_t *context, switch_core_session_t *session)
 {
-	if (switch_queue_push(context->connection->context_pool, context) != SWITCH_STATUS_SUCCESS) {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "hiredis: failed to release back to pool [%s, %d]\n", context->connection->host, context->connection->port);
-	} else {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: release back to pool [%s, %d]\n", context->connection->host, context->connection->port);
+	if (context) {
+		if (switch_queue_push(context->connection->context_pool, context) != SWITCH_STATUS_SUCCESS) {
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "hiredis: failed to release back to pool [%s, %d]\n", context->connection->host, context->connection->port);
+		} else {
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: release back to pool [%s, %d]\n", context->connection->host, context->connection->port);
+		}
 	}
 }
 
@@ -57,47 +93,51 @@ static void hiredis_context_release(hiredis_context_t *context, switch_core_sess
 static hiredis_context_t *hiredis_connection_get_context(hiredis_connection_t *conn, switch_core_session_t *session)
 {
 	void *val = NULL;
+	switch_time_t now = switch_time_now();
+	switch_time_t timeout = now + conn->timeout_us;
 
 	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: waiting for [%s, %d]\n", conn->host, conn->port);
-	if ( switch_queue_pop_timeout(conn->context_pool, &val, conn->timeout_us ) == SWITCH_STATUS_SUCCESS ) {
-		hiredis_context_t *context = (hiredis_context_t *)val;
-		if ( !context->context ) {
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "hiredis: attempting[%s, %d]\n", conn->host, conn->port);
-			context->context = redisConnectWithTimeout(conn->host, conn->port, conn->timeout);
-			if ( context->context && !context->context->err ) {
-				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: connection success[%s, %d]\n", conn->host, conn->port);
-				return context;
+	while (now < timeout) {
+		if ( switch_queue_pop_timeout(conn->context_pool, &val, timeout - now) == SWITCH_STATUS_SUCCESS ) {
+			hiredis_context_t *context = (hiredis_context_t *)val;
+			if ( !context->context ) {
+				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "hiredis: attempting[%s, %d]\n", conn->host, conn->port);
+				context->context = redisConnectWithTimeout(conn->host, conn->port, conn->timeout);
+				if ( context->context && !context->context->err && hiredis_context_auth(context) == SWITCH_STATUS_SUCCESS && hiredis_context_selectdb(context) == SWITCH_STATUS_SUCCESS) {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: connection success[%s, %d]\n", conn->host, conn->port);
+					return context;
+				} else {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "hiredis: connection error[%s, %d] (%s)\n", conn->host, conn->port, context->context->errstr);
+					hiredis_context_release(context, session);
+					return NULL;
+				}
+			} else if ( context->context->err ) {
+				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "hiredis: reconnecting[%s, %d]\n", conn->host, conn->port);
+				if (hiredis_context_reconnect(context) == SWITCH_STATUS_SUCCESS) {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: reconnection success[%s, %d]\n", conn->host, conn->port);
+					return context;
+				} else {
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "hiredis: reconnection error[%s, %d] (%s)\n", conn->host, conn->port, context->context->errstr);
+					hiredis_context_release(context, session);
+					return NULL;
+				}
 			} else {
-				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "hiredis: connection error[%s, %d] (%s)\n", conn->host, conn->port, context->context->errstr);
-				hiredis_context_release(context, session);
-				return NULL;
-			}
-		} else if ( context->context->err ) {
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "hiredis: reconnecting[%s, %d]\n", conn->host, conn->port);
-			if (hiredis_context_reconnect(context) == SWITCH_STATUS_SUCCESS) {
-				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: reconnection success[%s, %d]\n", conn->host, conn->port);
+				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: recycled from pool[%s, %d]\n", conn->host, conn->port);
 				return context;
-			} else {
-				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "hiredis: reconnection error[%s, %d] (%s)\n", conn->host, conn->port, context->context->errstr);
-				hiredis_context_release(context, session);
-				return NULL;
 			}
-		} else {
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "hiredis: recycled from pool[%s, %d]\n", conn->host, conn->port);
-			return context;
 		}
-	} else {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "hiredis: timed out waiting for [%s, %d]\n", conn->host, conn->port);
+		now = switch_time_now();
 	}
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "hiredis: timed out waiting for [%s, %d]\n", conn->host, conn->port);
 
 	return NULL;
 }
 
-switch_status_t hiredis_profile_create(hiredis_profile_t **new_profile, char *name, uint8_t ignore_connect_fail)
+switch_status_t hiredis_profile_create(hiredis_profile_t **new_profile, char *name, uint8_t ignore_connect_fail, uint8_t ignore_error, int max_pipelined_requests, int delete_when_zero)
 {
 	hiredis_profile_t *profile = NULL;
 	switch_memory_pool_t *pool = NULL;
-	
+
 	switch_core_new_memory_pool(&pool);
 
 	profile = switch_core_alloc(pool, sizeof(hiredis_profile_t));
@@ -106,6 +146,14 @@ switch_status_t hiredis_profile_create(hiredis_profile_t **new_profile, char *na
 	profile->name = name ? switch_core_strdup(profile->pool, name) : "default";
 	profile->conn_head = NULL;
 	profile->ignore_connect_fail = ignore_connect_fail;
+	profile->ignore_error = ignore_error;
+	profile->delete_when_zero = delete_when_zero;
+
+	profile->pipeline_running = 0;
+	profile->max_pipelined_requests = max_pipelined_requests;
+	switch_thread_rwlock_create(&profile->pipeline_lock, pool);
+	switch_queue_create(&profile->request_pool, 2000, pool);
+	switch_queue_create(&profile->active_requests, 2000, pool);
 
 	switch_core_hash_insert(mod_hiredis_globals.profiles, name, (void *) profile);
 
@@ -125,13 +173,15 @@ switch_status_t hiredis_profile_destroy(hiredis_profile_t **old_profile)
 		*old_profile = NULL;
 	}
 
+	hiredis_pipeline_threads_stop(profile);
+
 	switch_core_hash_delete(mod_hiredis_globals.profiles, profile->name);
 	switch_core_destroy_memory_pool(&(profile->pool));
 
 	return SWITCH_STATUS_SUCCESS;
 }
 
-switch_status_t hiredis_profile_connection_add(hiredis_profile_t *profile, char *host, char *password, uint32_t port, uint32_t timeout_ms, uint32_t max_contexts)
+switch_status_t hiredis_profile_connection_add(hiredis_profile_t *profile, char *host, char *password, uint32_t port, uint32_t dbindex, uint32_t timeout_ms, uint32_t max_contexts)
 {
 	hiredis_connection_t *connection = NULL, *new_conn = NULL;
 
@@ -139,6 +189,8 @@ switch_status_t hiredis_profile_connection_add(hiredis_profile_t *profile, char 
 	new_conn->host = host ? switch_core_strdup(profile->pool, host) : "localhost";
 	new_conn->password = password ? switch_core_strdup(profile->pool, password) : NULL;
 	new_conn->port = port ? port : 6379;
+	dbindex = dbindex > 15 ? 0 : dbindex;
+	new_conn->dbindex = dbindex ? dbindex : 0;
 	new_conn->pool = profile->pool;
 
 	/* create fixed size context pool */
@@ -153,6 +205,8 @@ switch_status_t hiredis_profile_connection_add(hiredis_profile_t *profile, char 
 			new_context->connection = new_conn;
 			new_context->context = NULL;
 			switch_queue_push(new_conn->context_pool, new_context);
+
+			hiredis_pipeline_thread_start(profile);
 		}
 	}
 
@@ -168,7 +222,7 @@ switch_status_t hiredis_profile_connection_add(hiredis_profile_t *profile, char 
 
 	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "hiredis: adding conn[%s,%d], pool size = %d\n", new_conn->host, new_conn->port, max_contexts);
 
-	if ( profile->conn_head != NULL ){
+	if ( profile->conn_head != NULL ) {
 		/* Adding 'another' connection */
 		connection = profile->conn_head;
 		while ( connection->next != NULL ) {
@@ -200,50 +254,113 @@ static hiredis_context_t *hiredis_profile_get_context(hiredis_profile_t *profile
 	return NULL;
 }
 
-static switch_status_t hiredis_context_execute_sync(hiredis_context_t *context, const char *data, char **resp, switch_core_session_t *session)
+static void hiredis_parse_response(hiredis_request_t *request, redisReply *response)
 {
-	redisReply *response;
-	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: %s\n", data);
-	response = redisCommand(context->context, data);
 	if ( !response ) {
-		*resp = NULL;
-		return SWITCH_STATUS_GENERR;
+		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(request->session_uuid), SWITCH_LOG_ERROR, "hiredis: no response\n");
+		if ( request->response ) {
+			*(request->response) = NULL;
+		}
+		request->status = SWITCH_STATUS_GENERR;
+		return;
 	}
 
 	switch(response->type) {
 	case REDIS_REPLY_STATUS: /* fallthrough */
 	case REDIS_REPLY_STRING:
-		*resp = strdup(response->str);
+		if ( request->response ) {
+			*(request->response ) = strdup(response->str);
+		}
+		request->status = SWITCH_STATUS_SUCCESS;
 		break;
 	case REDIS_REPLY_INTEGER:
-		*resp = switch_mprintf("%lld", response->integer);
+		if ( request->response ) {
+			*(request->response) = switch_mprintf("%lld", response->integer);
+		}
+		request->status = SWITCH_STATUS_SUCCESS;
 		break;
 	case REDIS_REPLY_NIL:
-		*resp = NULL;
+		if ( request->response ) {
+			*(request->response) = NULL;
+		}
+		request->status = SWITCH_STATUS_SUCCESS;
+		break;
+	case REDIS_REPLY_ERROR:
+		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(request->session_uuid), SWITCH_LOG_ERROR, "hiredis: error response[%s][%d]\n", response->str, response->type);
+		if ( request->response ) {
+			if (!zstr(response->str)) {
+				*(request->response) = strdup(response->str);
+			} else {
+				*(request->response) = NULL;
+			}
+		}
+		request->status = SWITCH_STATUS_GENERR;
+		break;
+	case REDIS_REPLY_ARRAY:
+		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(request->session_uuid), SWITCH_LOG_WARNING, "hiredis: unsupported array response[%d]\n", response->type);
+		if ( request->response ) {
+			*(request->response) = NULL;
+		}
+		request->status = SWITCH_STATUS_IGNORE;
 		break;
 	default:
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "hiredis: response error[%s][%d]\n", response->str, response->type);
-		freeReplyObject(response);
-		*resp = NULL;
-		return SWITCH_STATUS_GENERR;
+		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(request->session_uuid), SWITCH_LOG_WARNING, "hiredis: unsupported response[%d]\n", response->type);
+		if ( request->response ) {
+			*(request->response) = NULL;
+		}
+		request->status = SWITCH_STATUS_IGNORE;
+		break;
 	}
-
-	freeReplyObject(response);
-	return SWITCH_STATUS_SUCCESS;
 }
 
-switch_status_t hiredis_profile_execute_sync(hiredis_profile_t *profile, const char *data, char **resp, switch_core_session_t *session)
+static switch_status_t hiredis_context_execute_requests(hiredis_context_t *context, hiredis_request_t *requests)
 {
-	hiredis_context_t *context = NULL;
-	int reconnected = 0;
+	hiredis_request_t *cur_request;
+	int ok = 1;
 
-	context = hiredis_profile_get_context(profile, NULL, session);
+	for ( cur_request = requests; cur_request; cur_request = cur_request->next ) {
+		switch_log_printf(SWITCH_CHANNEL_UUID_LOG(cur_request->session_uuid), SWITCH_LOG_DEBUG, "hiredis: %s\n", cur_request->request);
+		if ( cur_request->do_eval ) {
+			/* eval needs special formatting to work properly */
+			redisAppendCommand(context->context, "eval %s %d %s", cur_request->request, cur_request->num_keys, cur_request->keys ? cur_request->keys : "");
+		} else {
+			redisAppendCommand(context->context, cur_request->request);
+		}
+	}
+
+	for ( cur_request = requests; cur_request; cur_request = cur_request->next ) {
+		redisReply *response = NULL;
+		int ret = redisGetReply(context->context, (void **)&response);
+		if ( ret == REDIS_OK ) {
+			hiredis_parse_response(cur_request, response);
+		} else {
+			ok = 0;
+			switch_log_printf(SWITCH_CHANNEL_UUID_LOG(cur_request->session_uuid), SWITCH_LOG_ERROR, "hiredis: failed to get reply\n");
+			cur_request->status = SWITCH_STATUS_GENERR;
+		}
+		if ( response ) {
+			freeReplyObject(response);
+		}
+	}
+
+	if ( ok ) {
+		return SWITCH_STATUS_SUCCESS;
+	}
+
+	return SWITCH_STATUS_GENERR;
+}
+
+switch_status_t hiredis_profile_execute_requests(hiredis_profile_t *profile, switch_core_session_t *session, hiredis_request_t *requests)
+{
+	hiredis_context_t *context = hiredis_profile_get_context(profile, NULL, session);
+	int reconnected = 0;
+	hiredis_request_t *cur_request;
+
 	while (context) {
-		if (hiredis_context_execute_sync(context, data, resp, session) == SWITCH_STATUS_SUCCESS) {
-			/* got result */
+		if (hiredis_context_execute_requests(context, requests) == SWITCH_STATUS_SUCCESS) {
 			hiredis_context_release(context, session);
 			return SWITCH_STATUS_SUCCESS;
-		} else if (context->context->err) {
+		} else if ( context->context->err ) {
 			/* have a bad connection, try a single reconnect attempt before moving on to alternate connection */
 			if (reconnected || hiredis_context_reconnect(context) != SWITCH_STATUS_SUCCESS) {
 				/* try alternate connection */
@@ -261,12 +378,48 @@ switch_status_t hiredis_profile_execute_sync(hiredis_profile_t *profile, const c
 				reconnected = 1;
 			}
 		} else {
-			/* no problem with context, so don't retry */
 			hiredis_context_release(context, session);
+			/* mark all requests as failed */
+			for ( cur_request = requests; cur_request; cur_request = cur_request->next ) {
+				cur_request->status = SWITCH_STATUS_GENERR;
+			}
 			return SWITCH_STATUS_GENERR;
 		}
 	}
+	/* mark all requests as failed */
+	for ( cur_request = requests; cur_request; cur_request = cur_request->next ) {
+		cur_request->status = SWITCH_STATUS_SOCKERR;
+	}
 	return SWITCH_STATUS_SOCKERR;
+}
+
+switch_status_t hiredis_profile_execute_sync(hiredis_profile_t *profile, switch_core_session_t *session, char **resp, const char *data)
+{
+	hiredis_request_t request = { 0 };
+	request.response = resp;
+	request.request = (char *)data;
+	request.next = NULL;
+	request.session_uuid = session ? (char *)switch_core_session_get_uuid(session) : NULL;
+	hiredis_profile_execute_requests(profile, session, &request);
+	return request.status;
+}
+
+switch_status_t hiredis_profile_execute_sync_printf(hiredis_profile_t *profile, switch_core_session_t *session, char **resp, const char *format_string, ...)
+{
+	switch_status_t result = SWITCH_STATUS_GENERR;
+	char *data = NULL;
+	va_list ap;
+	int ret;
+
+	va_start(ap, format_string);
+	ret = switch_vasprintf(&data, format_string, ap);
+	va_end(ap);
+
+	if (ret != -1) {
+		result = hiredis_profile_execute_sync(profile, session, resp, data);
+	}
+	switch_safe_free(data);
+	return result;
 }
 
 
