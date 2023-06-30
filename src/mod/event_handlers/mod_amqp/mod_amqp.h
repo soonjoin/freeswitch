@@ -43,7 +43,11 @@
 #include <amqp.h>
 #include <amqp_framing.h>
 #include <amqp_tcp_socket.h>
+#include <amqp_ssl_socket.h>
+
+#ifndef _MSC_VER
 #include <strings.h>
+#endif
 
 #define MAX_LOG_MESSAGE_SIZE 1024
 #define AMQP_MAX_HOSTS 4
@@ -71,6 +75,8 @@ typedef struct mod_amqp_connection_s {
   char *password;
   unsigned int port;
   unsigned int heartbeat; /* in seconds */
+  amqp_boolean_t ssl_on;
+  amqp_boolean_t ssl_verify_peer;
   amqp_connection_state_t state;
 
   struct mod_amqp_connection_s *next;
@@ -93,27 +99,27 @@ typedef struct {
   char *content_type;
   mod_amqp_keypart_t format_fields[MAX_ROUTING_KEY_FORMAT_FIELDS+1];
 
-  
+
   /* Array to store the possible event subscriptions */
   int event_subscriptions;
   switch_event_node_t *event_nodes[SWITCH_EVENT_ALL];
   switch_event_types_t event_ids[SWITCH_EVENT_ALL];
   switch_event_node_t *eventNode;
-  
+
 
   /* Because only the 'running' thread will be reading or writing to the two connection pointers
-   * this does not 'yet' need a read/write lock. Before these structures can be destroyed, 
+   * this does not 'yet' need a read/write lock. Before these structures can be destroyed,
    * the running thread must be joined first.
    */
   mod_amqp_connection_t *conn_root;
   mod_amqp_connection_t *conn_active;
-  
+
   /* Rabbit connections are not thread safe so one connection per thread.
      Communicate with sender thread using a queue */
   switch_thread_t *producer_thread;
   switch_queue_t *send_queue;
   unsigned int send_queue_size;
-  
+
   int reconnect_interval_ms;
   int circuit_breaker_ms;
   switch_time_t circuit_breaker_reset_time;
@@ -126,15 +132,21 @@ typedef struct {
 
 typedef struct {
   char *name;
-  
+
   char *exchange;
   char *queue;
   char *binding_key;
 
+  /* Queue properties */
+  switch_bool_t passive;
+  switch_bool_t durable;
+  switch_bool_t exclusive;
+  switch_bool_t auto_delete;
+
   /* Note: The AMQP channel is not reentrant this MUTEX serializes sending events. */
   mod_amqp_connection_t *conn_root;
   mod_amqp_connection_t *conn_active;
-  
+
   int reconnect_interval_ms;
 
   /* Listener thread */
@@ -148,7 +160,7 @@ typedef struct {
 
 typedef struct {
   char *name;
-  
+
   char *exchange;
   char *exchange_type;
   int exchange_durable;
@@ -159,7 +171,7 @@ typedef struct {
   /* Note: The AMQP channel is not reentrant this MUTEX serializes sending events. */
   mod_amqp_connection_t *conn_root;
   mod_amqp_connection_t *conn_active;
-  
+
   int reconnect_interval_ms;
 
   /* Logging thread */

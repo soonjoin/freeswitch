@@ -238,24 +238,8 @@ switch_status_t mod_amqp_logging_create(char *name, switch_xml_t cfg)
 		}
 	}
 	profile->conn_active = NULL;
+	/* We are not going to open the logging queue connection on create, but instead wait for the running thread to open it */
 
-	if ( mod_amqp_connection_open(profile->conn_root, &(profile->conn_active), profile->name, profile->custom_attr) != SWITCH_STATUS_SUCCESS) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Profile[%s] was unable to connect to any connection\n", profile->name);
-		goto err;
-	}
-
-	amqp_exchange_declare(profile->conn_active->state, 1,
-						  amqp_cstring_bytes(profile->exchange),
-						  amqp_cstring_bytes(profile->exchange_type),
-						  0, /* passive */
-						  profile->exchange_durable,
-						  amqp_empty_table);
-	
-	if (mod_amqp_log_if_amqp_error(amqp_get_rpc_reply(profile->conn_active->state), "Declaring exchange")) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Profile[%s] failed to create exchange\n", profile->name);
-		goto err;
-	}
-	
 	/* Create a bounded FIFO queue for sending messages */
 	if (switch_queue_create(&(profile->send_queue), profile->send_queue_size, profile->pool) != SWITCH_STATUS_SUCCESS) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Cannot create send queue of size %d!\n", profile->send_queue_size);
@@ -341,13 +325,24 @@ void * SWITCH_THREAD_FUNC mod_amqp_logging_thread(switch_thread_t *thread, void 
 
       status = mod_amqp_connection_open(profile->conn_root, &(profile->conn_active), profile->name, profile->custom_attr);
       if ( status	== SWITCH_STATUS_SUCCESS ) {
-	// Ensure that the exchange exists, and is of the correct type
-	amqp_exchange_declare(profile->conn_active->state, 1,
-			      amqp_cstring_bytes(profile->exchange),
-			      amqp_cstring_bytes(profile->exchange_type),
-			      passive,
-			      durable,
-			      amqp_empty_table);
+		  // Ensure that the exchange exists, and is of the correct type
+#if AMQP_VERSION_MAJOR == 0 && AMQP_VERSION_MINOR >= 6
+		  amqp_exchange_declare(profile->conn_active->state, 1,
+								amqp_cstring_bytes(profile->exchange),
+								amqp_cstring_bytes(profile->exchange_type),
+								passive,
+								durable,
+								profile->exchange_auto_delete,
+								0,
+								amqp_empty_table);
+#else		  
+		  amqp_exchange_declare(profile->conn_active->state, 1,
+								amqp_cstring_bytes(profile->exchange),
+								amqp_cstring_bytes(profile->exchange_type),
+								passive,
+								durable,
+								amqp_empty_table);
+#endif
 
 	if (!mod_amqp_log_if_amqp_error(amqp_get_rpc_reply(profile->conn_active->state), "Declaring exchange")) {
 	  switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "Amqp reconnect successful- connected\n");
@@ -382,7 +377,7 @@ void * SWITCH_THREAD_FUNC mod_amqp_logging_thread(switch_thread_t *thread, void 
 
       default:
 	switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Send failed with a generic error\n");
-	
+
 	/* Send failed and closed the connection; reconnect will happen at the beginning of the loop
 	 * NB: do we need a delay here to prevent a fast reconnect-send-fail loop? */
 	break;
