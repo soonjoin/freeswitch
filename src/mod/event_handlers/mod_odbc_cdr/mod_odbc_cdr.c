@@ -224,6 +224,7 @@ static void write_cdr(const char *path, const char *log_line)
 		wrote += write(fd, "\n", 1);
 		wrote++;
 		close(fd);
+		fd = -1;
 	}
 }
 
@@ -282,7 +283,7 @@ static switch_status_t odbc_cdr_reporting(switch_core_session_t *session)
 
 			if (!table) {
 				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_NOTICE, "Table [%s] not found, ignoring leg\n", table_name);
-				continue;
+				skip_leg = SWITCH_TRUE;
 			}
 
 			if (table->log_leg == ODBC_CDR_LOG_A && is_b) {
@@ -301,6 +302,10 @@ static switch_status_t odbc_cdr_reporting(switch_core_session_t *session)
 				cdr_field_t *field_hash_val;
 				char *sql = NULL;
 				char *full_path = NULL;
+				char psDate[6];
+				time_t nSeconds;
+				struct tm * pTM;
+				
 				switch_stream_handle_t stream_field = { 0 };
 				switch_stream_handle_t stream_value = { 0 };
 				switch_bool_t insert_fail = SWITCH_FALSE;
@@ -338,8 +343,13 @@ static switch_status_t odbc_cdr_reporting(switch_core_session_t *session)
 
 				}
 				switch_safe_free(i_hi);
+				memset(psDate,0,sizeof(psDate));
+				time(&nSeconds); // ? nSeconds = time(NULL);
+				pTM = localtime(&nSeconds);
+				sprintf(psDate,"%04d%02d", 
+		            pTM->tm_year + 1900, pTM->tm_mon + 1);
 
-				sql = switch_mprintf("INSERT INTO %q (%s) VALUES (%s)", table_name, stream_field.data, stream_value.data);
+				sql = switch_mprintf("INSERT INTO %q_%s (%s) VALUES (%s)", table_name, psDate, stream_field.data, stream_value.data);
 				if (globals.debug_sql == SWITCH_TRUE) {
 					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "sql %s\n", sql);
 				}
