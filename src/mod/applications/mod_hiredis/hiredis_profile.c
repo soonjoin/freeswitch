@@ -48,12 +48,30 @@ static switch_status_t hiredis_context_auth(hiredis_context_t *context)
 	return status;
 }
 
+/* select db */
+static switch_status_t hiredis_context_selectdb(hiredis_context_t *context)
+{
+	switch_status_t status = SWITCH_STATUS_SUCCESS;
+	context->connection->dbindex = context->connection->dbindex < 0 ? 0 : context->connection->dbindex;
+	context->connection->dbindex = context->connection->dbindex > 15 ? 0 : context->connection->dbindex;
+	if ( context->connection->dbindex >= 0 ) {
+		redisReply *response = redisCommand(context->context, "select %d", context->connection->dbindex);
+		if ( !response || response->type == REDIS_REPLY_ERROR ) {
+			status = SWITCH_STATUS_FALSE;
+		}
+		if ( response ) {
+			freeReplyObject(response);
+		}
+	}
+	return status;
+}
+
 /* reconnect to redis server */
 static switch_status_t hiredis_context_reconnect(hiredis_context_t *context)
 {
 	redisFree(context->context);
 	context->context = redisConnectWithTimeout(context->connection->host, context->connection->port, context->connection->timeout);
-	if ( context->context && !context->context->err && hiredis_context_auth(context) == SWITCH_STATUS_SUCCESS ) {
+	if ( context->context && !context->context->err && hiredis_context_auth(context) == SWITCH_STATUS_SUCCESS && hiredis_context_selectdb(context) == SWITCH_STATUS_SUCCESS ) {
 		return SWITCH_STATUS_SUCCESS;
 	}
 	return SWITCH_STATUS_FALSE;
@@ -85,7 +103,7 @@ static hiredis_context_t *hiredis_connection_get_context(hiredis_connection_t *c
 			if ( !context->context ) {
 				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "hiredis: attempting[%s, %d]\n", conn->host, conn->port);
 				context->context = redisConnectWithTimeout(conn->host, conn->port, conn->timeout);
-				if ( context->context && !context->context->err && hiredis_context_auth(context) == SWITCH_STATUS_SUCCESS ) {
+				if ( context->context && !context->context->err && hiredis_context_auth(context) == SWITCH_STATUS_SUCCESS && hiredis_context_selectdb(context) == SWITCH_STATUS_SUCCESS) {
 					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "hiredis: connection success[%s, %d]\n", conn->host, conn->port);
 					return context;
 				} else {
@@ -163,7 +181,7 @@ switch_status_t hiredis_profile_destroy(hiredis_profile_t **old_profile)
 	return SWITCH_STATUS_SUCCESS;
 }
 
-switch_status_t hiredis_profile_connection_add(hiredis_profile_t *profile, char *host, char *password, uint32_t port, uint32_t timeout_ms, uint32_t max_contexts)
+switch_status_t hiredis_profile_connection_add(hiredis_profile_t *profile, char *host, char *password, uint32_t port, uint32_t dbindex, uint32_t timeout_ms, uint32_t max_contexts)
 {
 	hiredis_connection_t *connection = NULL, *new_conn = NULL;
 
@@ -171,6 +189,8 @@ switch_status_t hiredis_profile_connection_add(hiredis_profile_t *profile, char 
 	new_conn->host = host ? switch_core_strdup(profile->pool, host) : "localhost";
 	new_conn->password = password ? switch_core_strdup(profile->pool, password) : NULL;
 	new_conn->port = port ? port : 6379;
+	dbindex = dbindex > 15 ? 0 : dbindex;
+	new_conn->dbindex = dbindex ? dbindex : 0;
 	new_conn->pool = profile->pool;
 
 	/* create fixed size context pool */
