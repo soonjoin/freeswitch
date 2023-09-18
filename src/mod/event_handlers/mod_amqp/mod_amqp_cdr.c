@@ -144,7 +144,10 @@ switch_status_t mod_amqp_cdr_routing_key(mod_amqp_cdr_profile_t *profile, char r
 				if (routingKeyChannelVariableNames[i].name[x][0] == '#') {
 					strncpy(routingKey + idx, routingKeyChannelVariableNames[i].name[x] + 1, MAX_AMQP_ROUTING_KEY_LENGTH - idx);
 					break;
-				} else {
+				} else if (!strncmp(routingKeyChannelVariableNames[i].name[x], "$leg", 4)) {
+                    strncpy(routingKey + idx, switch_channel_get_originator_caller_profile(channel) ? "b" : "a", MAX_AMQP_ROUTING_KEY_LENGTH - idx);
+                    break;
+                } else {
 					char *value = switch_channel_get_variable(channel, routingKeyChannelVariableNames[i].name[x]);
 					if (value) {
 						amqp_util_encode(value, keybuffer);
