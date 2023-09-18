@@ -185,12 +185,56 @@ typedef struct {
   switch_memory_pool_t *pool;
 } mod_amqp_logging_profile_t;
 
+typedef struct {
+  char *name;
+
+  char *exchange;
+  char *exchange_type;
+  int exchange_durable;
+  int exchange_auto_delete;
+  int delivery_mode;
+  int delivery_timestamp;
+  char *content_type;
+  mod_amqp_keypart_t format_fields[MAX_ROUTING_KEY_FORMAT_FIELDS+1];
+
+  
+  /* Array to store the possible event subscriptions */
+  // int event_subscriptions;
+  // switch_event_node_t *event_nodes[SWITCH_EVENT_ALL];
+  // switch_event_types_t event_ids[SWITCH_EVENT_ALL];
+  // switch_event_node_t *eventNode;
+
+
+  /* Because only the 'running' thread will be reading or writing to the two connection pointers
+   * this does not 'yet' need a read/write lock. Before these structures can be destroyed,
+   * the running thread must be joined first.
+   */
+  mod_amqp_connection_t *conn_root;
+  mod_amqp_connection_t *conn_active;
+
+  /* Rabbit connections are not thread safe so one connection per thread.
+     Communicate with sender thread using a queue */
+  switch_thread_t *cdr_thread;
+  switch_queue_t *send_queue;
+  unsigned int send_queue_size;
+
+  int reconnect_interval_ms;
+  int circuit_breaker_ms;
+  switch_time_t circuit_breaker_reset_time;
+  switch_bool_t enable_fallback_format_fields;
+
+  switch_bool_t running;
+  switch_memory_pool_t *pool;
+  char *custom_attr;
+} mod_amqp_cdr_profile_t;
+
 typedef struct mod_amqp_globals_s {
   switch_memory_pool_t *pool;
 
   switch_hash_t *producer_hash;
   switch_hash_t *command_hash;
   switch_hash_t *logging_hash;
+  switch_hash_t *cdr_hash;
 } mod_amqp_globals_t;
 
 extern mod_amqp_globals_t mod_amqp_globals;
@@ -227,6 +271,13 @@ switch_status_t mod_amqp_logging_recv(const switch_log_node_t *node, switch_log_
 switch_status_t mod_amqp_logging_create(char *name, switch_xml_t cfg);
 switch_status_t mod_amqp_logging_destroy(mod_amqp_logging_profile_t **prof);
 void * SWITCH_THREAD_FUNC mod_amqp_logging_thread(switch_thread_t *thread, void *data);
+
+/* cdr */
+switch_status_t mod_amqp_cdr_routing_key(mod_amqp_cdr_profile_t *profile, char routingKey[MAX_AMQP_ROUTING_KEY_LENGTH],
+								switch_core_session_t *session, mod_amqp_keypart_t routingKeyEventHeaderNames[]);
+switch_status_t mod_amqp_cdr_destroy(mod_amqp_cdr_profile_t **profile);
+switch_status_t mod_amqp_cdr_create(char *name, switch_xml_t cfg);
+void * SWITCH_THREAD_FUNC mod_amqp_cdr_thread(switch_thread_t *thread, void *data);
 
 #endif /* MOD_AMQP_H */
 
