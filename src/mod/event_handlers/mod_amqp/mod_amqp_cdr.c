@@ -119,6 +119,15 @@ static switch_state_handler_table_t state_handlers = {
 	/*.on_reporting */ mod_amqp_cdr_reporting
 };
 
+void mod_amqp_cdr_add_state_handler()
+{
+	switch_core_add_state_handler(&state_handlers);	
+}
+void mod_amqp_cdr_remove_state_handler()
+{
+	switch_core_remove_state_handler(&state_handlers);
+}
+
 switch_status_t mod_amqp_cdr_routing_key(mod_amqp_cdr_profile_t *profile, char routingKey[MAX_AMQP_ROUTING_KEY_LENGTH],
 											  switch_core_session_t *session, mod_amqp_keypart_t routingKeyChannelVariableNames[])
 {
@@ -195,7 +204,7 @@ switch_status_t mod_amqp_cdr_destroy(mod_amqp_cdr_profile_t **prof) {
 
 	*prof = NULL;
 
-	switch_core_remove_state_handler(&state_handlers);
+	//switch_core_remove_state_handler(&state_handlers);
 
 	return SWITCH_STATUS_SUCCESS;
 }
@@ -382,7 +391,7 @@ switch_status_t mod_amqp_cdr_create(char *name, switch_xml_t cfg)
 	}
 
 	/* Set state handler */
-	switch_core_add_state_handler(&state_handlers);
+	//switch_core_add_state_handler(&state_handlers);
 
 	if ( switch_core_hash_insert(mod_amqp_globals.cdr_hash, name, (void *) profile) != SWITCH_STATUS_SUCCESS) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Failed to insert new profile [%s] into mod_amqp profile hash\n", name);

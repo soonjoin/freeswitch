@@ -273,6 +273,8 @@ switch_status_t mod_amqp_logging_destroy(mod_amqp_logging_profile_t **prof);
 void * SWITCH_THREAD_FUNC mod_amqp_logging_thread(switch_thread_t *thread, void *data);
 
 /* cdr */
+void mod_amqp_cdr_add_state_handler();
+void mod_amqp_cdr_remove_state_handler();
 switch_status_t mod_amqp_cdr_routing_key(mod_amqp_cdr_profile_t *profile, char routingKey[MAX_AMQP_ROUTING_KEY_LENGTH],
 								switch_core_session_t *session, mod_amqp_keypart_t routingKeyEventHeaderNames[]);
 switch_status_t mod_amqp_cdr_destroy(mod_amqp_cdr_profile_t **profile);

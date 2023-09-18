@@ -122,6 +122,7 @@ switch_status_t mod_amqp_do_config(switch_bool_t reload)
 			mod_amqp_logging_destroy(&logging);
 		}
 
+		mod_amqp_cdr_remove_state_handler();
 		while ((hi = switch_core_hash_first_iter(mod_amqp_globals.cdr_hash, hi))) {
 			switch_core_hash_this(hi, NULL, NULL, (void **)&cdr);
 			mod_amqp_cdr_destroy(&cdr);
@@ -192,6 +193,7 @@ switch_status_t mod_amqp_do_config(switch_bool_t reload)
 					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Loaded mod_amqp profile [%s] successfully\n", name);
 				}
 			}
+			switch_log_bind_logger(mod_amqp_logging_recv, SWITCH_LOG_DEBUG, SWITCH_FALSE);
 		} else {
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Unable to locate a profile for mod_amqp\n" );
 		}
@@ -215,6 +217,7 @@ switch_status_t mod_amqp_do_config(switch_bool_t reload)
 					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Loaded mod_amqp profile [%s] successfully\n", name);
 				}
 			}
+			mod_amqp_cdr_add_state_handler();
 		} else {
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "Unable to locate a profile for mod_amqp\n" );
 		}
