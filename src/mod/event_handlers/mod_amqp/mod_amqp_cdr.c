@@ -148,9 +148,9 @@ switch_status_t mod_amqp_cdr_routing_key(mod_amqp_cdr_profile_t *profile, char r
                     strncpy(routingKey + idx, switch_channel_get_originator_caller_profile(channel) ? "b" : "a", MAX_AMQP_ROUTING_KEY_LENGTH - idx);
                     break;
                 } else {
-					char *value = switch_channel_get_variable(channel, routingKeyChannelVariableNames[i].name[x]);
+					const char *value = switch_channel_get_variable(channel, routingKeyChannelVariableNames[i].name[x]);
 					if (value) {
-						amqp_util_encode(value, keybuffer);
+						amqp_util_encode((char *)value, keybuffer);
 						strncpy(routingKey + idx, keybuffer, MAX_AMQP_ROUTING_KEY_LENGTH - idx);
 						break;
 					}
