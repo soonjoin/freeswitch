@@ -622,6 +622,7 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 	const char *banner_file = NULL;
 	int played_banner = 0, banner_counter = 0;
 	int pass_val = 0, last_pass_val = 0;
+	int manual_answer_other_leg = 0;
 
 #ifdef SWITCH_VIDEO_IN_THREADS
 	struct vid_helper vh = { 0 };
@@ -752,6 +753,7 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 	}
 
 	bridge_filter_dtmf = switch_true(switch_channel_get_variable(chan_a, "bridge_filter_dtmf"));
+	manual_answer_other_leg = switch_true(switch_channel_get_variable(chan_a, "manual_answer_other_leg"));
 
 #ifdef _FIX_RINGBACK_
 	if (switch_channel_direction(chan_a) == SWITCH_CALL_DIRECTION_OUTBOUND) {
@@ -1001,7 +1003,7 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 			}
 		}
 
-		if (ans_a != ans_b) {
+		if (ans_a != ans_b && !manual_answer_other_leg) {
 			switch_channel_t *un = ans_a ? chan_b : chan_a;
 			switch_channel_t *a = un == chan_b ? chan_a : chan_b;
 
