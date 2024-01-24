@@ -40,7 +40,7 @@ Step by step tutorials to install FreeSWITCH from packages:
 ### Build from source
 
 Example Dockerfiles to build FreeSWITCH and dependencies from source:
-  * https://github.com/signalwire/freeswitch/tree/dockerfile/docker/examples
+  * https://github.com/signalwire/freeswitch/tree/master/docker/examples
 
 Step by step tutorials to build FreeSWITCH with provided dependency packages:
   * [Debian](https://freeswitch.org/confluence/display/FREESWITCH/Debian#Debian-buildfromsource) [<b>Recommended</b>]
@@ -67,8 +67,8 @@ This is the place to get answers faster and chat with other users in real time. 
 Slack Community:
   * https://signalwire.community/
 
-Mailing list:
+Mailing list (ARCHIVED):
 
-  * http://lists.freeswitch.org/mailman/listinfo/freeswitch-users
+  * http://lists.freeswitch.org/pipermail/freeswitch-users/
 
 **Thank you for using FreeSWITCH!**
