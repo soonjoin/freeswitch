@@ -39,6 +39,8 @@
 #include <sys/stat.h>
 #include <libpq-fe.h>
 
+#define SIZE_POOL 75
+
 SWITCH_MODULE_LOAD_FUNCTION(mod_cdr_pg_csv_load);
 SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_cdr_pg_csv_shutdown);
 SWITCH_MODULE_DEFINITION(mod_cdr_pg_csv, mod_cdr_pg_csv_load, mod_cdr_pg_csv_shutdown, NULL);
@@ -80,9 +82,9 @@ static struct {
 	char *db_info;
 	char *db_table;
 	db_schema_t *db_schema;
-	PGconn *db_connection;
-	switch_mutex_t *db_mutex;
-	int db_online;
+	PGconn *db_connection[SIZE_POOL];
+	switch_mutex_t *db_mutex[SIZE_POOL];
+	int db_online[SIZE_POOL];
 	cdr_leg_t legs;
 	char *spool_dir;
 	spool_format_t spool_format;
@@ -246,6 +248,16 @@ static void spool_cdr(const char *path, const char *log_line)
 
 static switch_status_t insert_cdr(const char *values)
 {
+	// added by sujin
+	// it's none thread safe, but it's not big problem.
+	static unsigned int count_executed = 0;
+	unsigned int index_conn = count_executed++ % SIZE_POOL;
+	int         sock;
+	fd_set      input_mask;
+	struct timeval timeout;
+	int failed_exec_sql = 0;
+	// added end
+
 	char *sql = NULL, *path = NULL;
 	PGresult *res;
 
@@ -256,39 +268,72 @@ static switch_status_t insert_cdr(const char *values)
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE, "Query: \"%s\"\n", sql);
 	}
 
-	switch_mutex_lock(globals.db_mutex);
+	switch_mutex_lock(globals.db_mutex[index_conn]);
 
-	if (!globals.db_online || PQstatus(globals.db_connection) != CONNECTION_OK) {
-		globals.db_connection = PQconnectdb(globals.db_info);
+	if (!globals.db_online[index_conn] || PQstatus(globals.db_connection[index_conn]) != CONNECTION_OK) {
+		globals.db_connection[index_conn] = PQconnectdb(globals.db_info);
 	}
 
-	if (PQstatus(globals.db_connection) == CONNECTION_OK) {
-		globals.db_online = 1;
+	if (PQstatus(globals.db_connection[index_conn]) == CONNECTION_OK) {
+		globals.db_online[index_conn] = 1;
 	} else {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Connection to database failed: %s", PQerrorMessage(globals.db_connection));
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Connection to database failed: %s", PQerrorMessage(globals.db_connection[index_conn]));
 		goto error;
 	}
 
-	res = PQexec(globals.db_connection, sql);
+	// modified by sujin
+	// change PQexec to PQsendQuery for adding a timeout process.
+	/*res = PQexec(globals.db_connection[index_conn], sql);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "INSERT command failed: %s", PQresultErrorMessage(res));
 		PQclear(res);
 		goto error;
+	}*/
+	// send query
+	if (0 == PQsendQuery(globals.db_connection[index_conn], sql)) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "INSERT command failed: %s", "PQsendQuery failed");
+		goto error;
+	}
+	// wait 5s for getting result
+	if ((sock = PQsocket(globals.db_connection[index_conn])) < 0) {	/* shouldn't happen */
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "INSERT command failed: %s", "PQsocket failed");
+		goto error;
+	}
+	FD_ZERO(&input_mask);
+	FD_SET(sock, &input_mask);
+	timeout.tv_sec = 5;
+	timeout.tv_usec = 0;
+	if (select(sock + 1, &input_mask, NULL, NULL, &timeout) <= 0) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "INSERT command failed: socket select timeout or failed(%s)", strerror(errno));
+		goto error;
+	}
+	// get result
+	do {
+		if ( (res = PQgetResult(globals.db_connection[index_conn])) != NULL ) {
+			if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+				failed_exec_sql = 1;
+				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "INSERT command failed: PQresultStatus(res)=%d", PQresultStatus(res));
+			}
+			PQclear(res);
+		}
+	} while( NULL != res);
+	if (failed_exec_sql) {
+		goto error;
 	}
 
-	PQclear(res);
+	//PQclear(res);
 	switch_safe_free(sql);
 
-	switch_mutex_unlock(globals.db_mutex);
+	switch_mutex_unlock(globals.db_mutex[index_conn]);
 
 	return SWITCH_STATUS_SUCCESS;
 
 
   error:
 
-	PQfinish(globals.db_connection);
-	globals.db_online = 0;
-	switch_mutex_unlock(globals.db_mutex);
+	PQfinish(globals.db_connection[index_conn]);
+	globals.db_online[index_conn] = 0;
+	switch_mutex_unlock(globals.db_mutex[index_conn]);
 
 	/* SQL INSERT failed for whatever reason. Spool the attempted query to disk */
 	if (globals.spool_format == SPOOL_FORMAT_SQL) {
@@ -309,6 +354,9 @@ static switch_status_t insert_cdr(const char *values)
 
 static switch_status_t my_on_reporting(switch_core_session_t *session)
 {
+	time_t start;
+	int duration;
+
 	switch_channel_t *channel = switch_core_session_get_channel(session);
 	switch_status_t status = SWITCH_STATUS_SUCCESS;
 	char *values = NULL, *tmp = NULL, *pq_var = NULL;
@@ -362,6 +410,60 @@ static switch_status_t my_on_reporting(switch_core_session_t *session)
 			var = tmp;
 		}
 
+		// added by sujin for get detail xml_cdr,json_cdr and insert into DB
+		// and for get bridge_uuid while call do not establish
+		if (!var) {
+			if (!strcasecmp(cdr_field->var_name, "xml")) {
+				switch_xml_t cdr_xml = NULL;
+				if (switch_ivr_generate_xml_cdr(session, &cdr_xml) == SWITCH_STATUS_SUCCESS) {
+					/* build the XML */
+					char *buf = NULL;
+					if ((buf = switch_xml_toxml(cdr_xml, SWITCH_TRUE))) {
+						/* Allocate sufficient buffer for PQescapeString */
+						len = strlen(buf);
+						tmp = switch_core_session_alloc(session, len * 2 + 1);
+						PQescapeString(tmp, buf, len);
+						var = tmp;
+						switch_safe_free(buf);
+					}
+					switch_xml_free(cdr_xml);
+				}
+			}
+			else if (!strcasecmp(cdr_field->var_name, "json")) {
+				cJSON *cdr_json = NULL;
+				if (switch_ivr_generate_json_cdr(session, &cdr_json, SWITCH_TRUE) == SWITCH_STATUS_SUCCESS) {
+					/* build the json */
+					char *buf = NULL;
+					if ((buf = cJSON_Print(cdr_json))) {
+						/* Allocate sufficient buffer for PQescapeString */
+						len = strlen(buf);
+						tmp = switch_core_session_alloc(session, len * 2 + 1);
+						PQescapeString(tmp, buf, len);
+						var = tmp;
+						switch_safe_free(buf);
+					}
+					cJSON_Delete(cdr_json);
+				}
+			}
+			else if (!strcasecmp(cdr_field->var_name, "bridge_uuid")) {
+				if ((var = switch_channel_get_variable(channel, "signal_bond"))) {
+					/* Allocate sufficient buffer for PQescapeString */
+					len = strlen(var);
+					tmp = switch_core_session_alloc(session, len * 2 + 1);
+					PQescapeString(tmp, var, len);
+					var = tmp;
+				}
+				else if ((var = switch_channel_get_variable(channel, "originate_signal_bond"))) {
+					/* Allocate sufficient buffer for PQescapeString */
+					len = strlen(var);
+					tmp = switch_core_session_alloc(session, len * 2 + 1);
+					PQescapeString(tmp, var, len);
+					var = tmp;
+				}
+			}
+		}
+		// added end
+
 		if ((cdr_field->not_null == SWITCH_FALSE) && zstr(var)) {
 			pq_var = switch_mprintf("null,", var);
 		} else {
@@ -382,7 +484,11 @@ static switch_status_t my_on_reporting(switch_core_session_t *session)
 	}
 	*(values + --offset) = '\0';
 
+	start = time(0);
 	insert_cdr(values);
+	duration = time(0) - start;
+	if (duration >= 5)
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Execute SQL time:%d, consider increase connection pool size.\n", duration);
 	switch_safe_free(values);
 
 	return status;
@@ -408,9 +514,11 @@ static void event_handler(switch_event_t *event)
 			do_rotate(fd);
 			switch_mutex_unlock(fd->mutex);
 		}
-		if (globals.db_online) {
-			PQfinish(globals.db_connection);
-			globals.db_online = 0;
+		for (int index_conn = 0; index_conn < SIZE_POOL; index_conn++) {
+			if (globals.db_online[index_conn]) {
+				PQfinish(globals.db_connection[index_conn]);
+				globals.db_online[index_conn] = 0;
+			}
 		}
 	}
 }
@@ -441,16 +549,21 @@ static switch_status_t load_config(switch_memory_pool_t *pool)
 	switch_size_t len = 0;
 	cdr_field_t *cdr_field;
 
-	if (globals.db_online) {
-		PQfinish(globals.db_connection);
-		switch_mutex_destroy(globals.db_mutex);
-		globals.db_online = 0;
-	}
+	for (int index_conn = 0; index_conn < SIZE_POOL; index_conn++) {
+		if (globals.db_online[index_conn]) {
+			PQfinish(globals.db_connection[index_conn]);
+			switch_mutex_destroy(globals.db_mutex[index_conn]);
+			globals.db_online[index_conn] = 0;
+		}
+	}		
 
 	memset(&globals, 0, sizeof(globals));
 	switch_core_hash_init(&globals.fd_hash);
-	switch_mutex_init(&globals.db_mutex, SWITCH_MUTEX_NESTED, pool);
-
+	
+	for (int index_conn = 0; index_conn < SIZE_POOL; index_conn++) {
+		switch_mutex_init(&globals.db_mutex[index_conn], SWITCH_MUTEX_NESTED, pool);
+	}
+	
 	globals.pool = pool;
 
 	if (switch_xml_config_parse_module_settings(cf, SWITCH_FALSE, config_settings) != SWITCH_STATUS_SUCCESS) {
@@ -547,9 +660,11 @@ SWITCH_MODULE_SHUTDOWN_FUNCTION(mod_cdr_pg_csv_shutdown)
 
 	globals.shutdown = 1;
 
-	if (globals.db_online) {
-		PQfinish(globals.db_connection);
-		globals.db_online = 0;
+	for (int index_conn = 0; index_conn < SIZE_POOL; index_conn++) {
+		if (globals.db_online[index_conn]) {
+			PQfinish(globals.db_connection[index_conn]);
+			globals.db_online[index_conn] = 0;
+		}
 	}
 
 	switch_event_unbind_callback(event_handler);
