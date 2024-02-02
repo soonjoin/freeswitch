@@ -243,6 +243,14 @@ Requires:       %{name} = %{version}-%{release}
 %description application-abstraction
 Provide an abstraction to FreeSWITCH API calls
 
+%package application-av
+Summary:        FreeSWITCH Video Codec / File Format using libav.org
+Group:          System/Libraries
+Requires:       %{name} = %{version}-%{release}
+
+%description application-av
+Provide video codec/file format for FreeSWITCH
+
 %package application-avmd
 Summary:	FreeSWITCH voicemail detector
 Group:          System/Libraries
@@ -1320,6 +1328,7 @@ Summary:        Basic vanilla config set for the FreeSWITCH Open Source telephon
 Group:          System/Libraries
 Requires:	%{name} = %{version}-%{release}
 Requires:	freeswitch-application-abstraction
+Requires:       freeswitch-application-av
 Requires:	freeswitch-application-avmd
 Requires:	freeswitch-application-blacklist
 Requires:	freeswitch-application-callcenter
@@ -1414,7 +1423,7 @@ export QA_RPATHS=$[ 0x0001|0x0002 ]
 #						Application Modules
 #
 ######################################################################################################################
-APPLICATION_MODULES_AC="applications/mod_abstraction applications/mod_avmd applications/mod_blacklist \
+APPLICATION_MODULES_AC="applications/mod_abstraction applications/mod_av applications/mod_avmd applications/mod_blacklist \
 			applications/mod_callcenter  applications/mod_cidlookup \
 			applications/mod_commands applications/mod_conference applications/mod_curl"
 APPLICATION_MODULES_DE="applications/mod_db applications/mod_directory applications/mod_distributor \
@@ -2027,6 +2036,9 @@ fi
 ######################################################################################################################
 %files application-abstraction
 %{MODINSTDIR}/mod_abstraction.so*
+
+%files application-av
+%{MODINSTDIR}/mod_av.so*
 
 %files application-avmd
 %{MODINSTDIR}/mod_avmd.so*
