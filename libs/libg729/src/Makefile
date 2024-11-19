@@ -1,6 +1,6 @@
 #CFLAGS += -Wall -O3 -funroll-loops -fPIC -ggdb
 
-CFLAGS += -lm -fPIC -Werror -Wno-unused-result -fvisibility=hidden -DSWITCH_API_VISIBILITY=1 -DHAVE_VISIBILITY=1 -DHAVE_OPENSSL -O2 -Wall -std=c99 -pedantic -Wdeclaration-after-statement -D_GNU_SOURCE -DHAVE_CONFIG_H
+CFLAGS += -lm -fPIC -Wall -fvisibility=hidden -DSWITCH_API_VISIBILITY=1 -DHAVE_VISIBILITY=1 -DHAVE_OPENSSL -O2 -Wall -std=c99 -pedantic -Wdeclaration-after-statement -D_GNU_SOURCE -DHAVE_CONFIG_H
 
 ITUTDIR = itu-t
 IPPDIR = ipp

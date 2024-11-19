@@ -762,6 +762,7 @@ case "$host" in
         fi
         if test "$clangvers" -ge 4; then          # Xcode 4 / 10.7 and up
            APR_ADDTO(CFLAGS, -Wno-deprecated-declarations)
+           APR_ADDTO(CFLAGS, -Wno-int-conversion)
         fi
         if test "$osxrel" -ge 6; then             # 10.6 and up
            APR_ADDTO(CFLAGS, -pipe -no-cpp-precomp)
@@ -1070,6 +1071,7 @@ if test "x${ax_cv_c_compiler_vendor}" = "xclang" ; then
      AC_MSG_RESULT($ac_cv_clang_extended_offsetof)
      if test x"$ac_cv_clang_extended_offsetof" = xyes; then
          APR_ADDTO(CFLAGS, -Wno-extended-offsetof)
+         APR_ADDTO(CFLAGS, -Wno-int-conversion)
      fi
 fi
 
